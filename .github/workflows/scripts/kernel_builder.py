@@ -130,15 +130,18 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
         self.shell.cwd = str(path)
 
     def _apply_susfs_commit(self):
-        if not self.config.susfs_commit or not self.susfs_dir.exists():
+        susfs_commit = self.config.resolved_susfs_commit
+        if not susfs_commit or not self.susfs_dir.exists():
             return
         self._chdir(self.susfs_dir)
-        if self.config.susfs_commit.startswith("HEAD~"):
+        if susfs_commit.startswith("HEAD~"):
             self._run_cmd("git fetch origin", check=False)
-            self._run_cmd(f"git reset --hard {self.config.susfs_commit}", check=False)
+            self._run_cmd(f"git reset --hard {susfs_commit}", check=True)
         else:
             self._run_cmd("git fetch origin", check=False)
-            self._run_cmd(f"git checkout {self.config.susfs_commit}", check=False)
+            self._run_cmd(f"git checkout {susfs_commit}", check=True)
+        susfs_head = self._run_cmd("git rev-parse HEAD", check=True, capture_output=True).stdout.strip()
+        logger.info(f"SUSFS pinned HEAD: {susfs_head}")
         self._chdir(self.workspace)
 
     def clone_repositories(self):

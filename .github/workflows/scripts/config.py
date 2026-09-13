@@ -71,6 +71,8 @@ KSU_REPO_CONFIG = {"repo_url": "https://github.com/SukiSU-Ultra/SukiSU-Ultra.git
 # SUSFS 仓库配置
 SUSFS_REPO_CONFIG = {"repo_url": "https://github.com/ShirkNeko/susfs4ksu.git"}
 
+SUSFS_COMPATIBLE_COMMITS = {"gki-android13-5.10": "818714ed0c7f13f478b0d80541c76abb9e71d3c6"}
+
 # SukiSU Patch 仓库配置
 SUKISU_PATCH_REPO_CONFIG = {"repo_url": "https://github.com/ShirkNeko/SukiSU_patch.git"}
 
@@ -157,6 +159,10 @@ class BuildConfig:
     @property
     def kernel_branch(self) -> str:
         return f"gki-{self.android_version}-{self.kernel_version}"
+
+    @property
+    def resolved_susfs_commit(self) -> Optional[str]:
+        return self.susfs_commit or SUSFS_COMPATIBLE_COMMITS.get(self.kernel_branch)
 
     def get_susfs_patch_filename(self) -> str:
         return f"50_add_susfs_in_gki-{self.android_version}-{self.kernel_version}.patch"
