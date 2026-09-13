@@ -212,6 +212,39 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
         common_dir = self.work_dir / "common"
         if not common_dir.exists():
             raise RuntimeError("repo sync 失败，common 目录不存在")
+
+        # Pixel 6 / AP2A.240905.003.F1
+        # Exact Google kernel release:
+        # android-14.0.0_r0.130
+        # 12f3388846c3a8887a607afe1481ccc283455d89
+        logger.info("=== 锁定 Pixel 6 原厂 kernel/common commit ===")
+        
+        self._chdir(common_dir)
+        
+        self._run_cmd(
+            "git fetch https://android.googlesource.com/kernel/common "
+            "refs/tags/android-14.0.0_r0.130 --depth=1",
+            check=True
+        )
+        
+        self._run_cmd(
+            "git checkout --detach FETCH_HEAD",
+            check=True
+        )
+        
+        head = self._run_cmd(
+            "git rev-parse HEAD",
+            check=True,
+            capture_output=True,
+        ).stdout.strip()
+        
+        logger.info(f"当前 kernel/common commit: {head}")
+        
+        if head != "12f3388846c3a8887a607afe1481ccc283455d89":
+            raise RuntimeError(f"内核源码 commit 不匹配，实际为: {head}")
+        
+        self._chdir(self.work_dir)
+
         self._apply_legacy_fixes(remote)
         logger.info("=== 内核源代码同步完成 ===")
 
