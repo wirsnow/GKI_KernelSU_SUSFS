@@ -278,18 +278,55 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
             with open(drivers_dir / "Makefile", "a") as f:
                 f.write("obj-y += hmbird_patch.o\n")
 
+    # def add_kernelsu(self):
+    #     logger.info("=== 添加 KernelSU ===")
+    #     self._chdir(self.work_dir)
+    #     setup_url = (f"https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/{self.config.kernelsu_commit}/kernel/setup.sh"
+    #                 if self.config.kernelsu_commit else KSU_REPO_CONFIG["setup_script"])
+    #     self._run_cmd(f"curl -LSs {setup_url} | bash -s builtin", check=False)
+    #     if self.config.kernelsu_commit:
+    #         ksu_dir = self.work_dir / "KernelSU"
+    #         if ksu_dir.exists():
+    #             self._chdir(ksu_dir)
+    #             self._run_cmd(f"git checkout {self.config.kernelsu_commit}", check=False)
+    #             self._chdir(self.work_dir)
+
     def add_kernelsu(self):
-        logger.info("=== 添加 KernelSU ===")
+        logger.info("=== 添加 SukiSU Ultra Built-in ===")
         self._chdir(self.work_dir)
-        setup_url = (f"https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/{self.config.kernelsu_commit}/kernel/setup.sh"
-                    if self.config.kernelsu_commit else KSU_REPO_CONFIG["setup_script"])
-        self._run_cmd(f"curl -LSs {setup_url} | bash -s builtin", check=False)
-        if self.config.kernelsu_commit:
-            ksu_dir = self.work_dir / "KernelSU"
-            if ksu_dir.exists():
-                self._chdir(ksu_dir)
-                self._run_cmd(f"git checkout {self.config.kernelsu_commit}", check=False)
-                self._chdir(self.work_dir)
+    
+        # Pixel 6 这次固定使用官方 builtin 分支
+        setup_url = KSU_REPO_CONFIG["setup_script"]
+        self._run_cmd(
+            f"curl -LSs {setup_url} | bash -s builtin",
+            check=True
+        )
+        ksu_dir = self.work_dir / "KernelSU"
+        if not ksu_dir.exists():
+            raise RuntimeError("SukiSU Ultra 克隆失败，KernelSU 目录不存在")
+    
+        self._chdir(ksu_dir)
+    
+        # SukiSU Ultra builtin v4.2.0 当前上游编译修复：
+        # PR #964 - restore missing kernel_umount_feature_set
+        logger.info("=== 应用 SukiSU builtin kernel_umount 修复 PR #964 ===")
+        self._run_cmd(
+            "git fetch origin pull/964/head:fix-kernel-umount",
+            check=True
+        )
+        self._run_cmd(
+            "git cherry-pick 77d4352a930155f9eae8724515db04c743aab6c4",
+            check=True
+        )
+    
+        # 输出 SukiSU 实际版本，方便核对
+        sukisu_head = self._run_cmd(
+            "git rev-parse HEAD",
+            check=True,
+            capture_output=True,
+        ).stdout.strip()
+        logger.info(f"SukiSU patched HEAD: {sukisu_head}")
+        self._chdir(self.work_dir)
 
     def add_bbg(self):
         if not self.config.use_bbg:
