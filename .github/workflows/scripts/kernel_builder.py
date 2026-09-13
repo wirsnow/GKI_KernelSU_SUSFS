@@ -315,7 +315,7 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
             check=True
         )
         self._run_cmd(
-            "git cherry-pick 77d4352a930155f9eae8724515db04c743aab6c4",
+            "git cherry-pick --no-commit 77d4352a930155f9eae8724515db04c743aab6c4",
             check=True
         )
     
