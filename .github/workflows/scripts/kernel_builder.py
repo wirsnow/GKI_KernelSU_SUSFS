@@ -368,8 +368,26 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
             patch_file = common_dir / self.config.get_susfs_patch_filename()
             if patch_file.exists():
                 self._chdir(common_dir)
-                self._run_cmd(f"patch -p1 --fuzz=3 < {patch_file}", check=False)
+                self._run_cmd(f"patch -p1 --fuzz=3 < {patch_file}", check=True)
+                self._fix_susfs_statfs_declaration(common_dir / "fs/statfs.c")
                 self._chdir(self.work_dir)
+
+    @staticmethod
+    def _fix_susfs_statfs_declaration(statfs_file: Path):
+        declaration = "extern int susfs_sus_kstat_spoof_vfs_statfs(struct inode *inode, struct kstatfs *buf, bool *is_fuse);\n"
+        helper = "static int susfs_statfs_by_dentry(struct dentry *dentry, struct kstatfs *buf, bool *is_fuse)"
+        content = statfs_file.read_text()
+        declaration_index = content.find(declaration)
+        helper_index = content.find(helper)
+        if declaration_index < 0 or helper_index < 0:
+            return
+        if declaration_index < helper_index:
+            return
+        content = content[:declaration_index] + content[declaration_index + len(declaration):]
+        helper_index = content.find(helper)
+        content = content[:helper_index] + declaration + content[helper_index:]
+        statfs_file.write_text(content)
+        logger.info("已修复 SUSFS statfs 函数声明顺序")
 
     def apply_sukisu_patches(self):
         logger.info("=== 应用 SukiSU 补丁 ===")
