@@ -38,6 +38,10 @@ class SusfsCommitCompatibilityTest(unittest.TestCase):
         config = BuildConfig(android_version="android13", kernel_version="5.10", sub_level="198", os_patch_level="2024-06", susfs_commit="abcdef1")
         self.assertEqual(config.resolved_susfs_commit, "abcdef1")
 
+    def test_android14_6_1_uses_sukisu_4_2_compatible_susfs_commit(self):
+        config = BuildConfig(android_version="android14", kernel_version="6.1", sub_level="145", os_patch_level="2025-09")
+        self.assertEqual(config.resolved_susfs_commit, "e5b4d2879836cfb8379010a8ebee76c519f5c834")
+
 
 class KernelSourcePinTest(unittest.TestCase):
     def test_old_pixel_kernel_uses_its_exact_source(self):
