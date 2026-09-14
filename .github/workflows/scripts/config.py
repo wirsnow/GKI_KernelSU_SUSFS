@@ -13,7 +13,7 @@ def get_susfs_version() -> str:
     ssl_ctx.verify_mode = ssl.CERT_NONE
 
     # 尝试多个分支获取版本号
-    branches = ["gki-android15-6.6", "gki-android14-6.1", "gki-android13-5.15", "gki-android12-5.10", "main"]
+    branches = ["gki-android15-6.6", "gki-android14-6.1", "gki-android13-5.15", "gki-android13-5.10", "gki-android12-5.10", "main"]
     version_pattern = re.compile(r'#define\s+SUSFS_VERSION\s+"([^"]+)"')
 
     for branch in branches:
@@ -72,6 +72,12 @@ KSU_REPO_CONFIG = {"repo_url": "https://github.com/SukiSU-Ultra/SukiSU-Ultra.git
 SUSFS_REPO_CONFIG = {"repo_url": "https://github.com/ShirkNeko/susfs4ksu.git"}
 
 SUSFS_COMPATIBLE_COMMITS = {"gki-android13-5.10": "818714ed0c7f13f478b0d80541c76abb9e71d3c6"}
+
+KERNEL_SOURCE_PINS = {
+    "android13-5.10-198-2024-01": {"ref": "refs/tags/android-14.0.0_r0.130", "commit": "12f3388846c3a8887a607afe1481ccc283455d89"},
+    "android13-5.10-198-2024-06": {"ref": "refs/tags/android-14.0.0_r0.130", "commit": "12f3388846c3a8887a607afe1481ccc283455d89"},
+    "android14-6.1-145-2025-09": {"ref": "refs/tags/android14-6.1-2025-09_r22", "commit": "fa1d6308d1fe803c3fdebcd3ee6f7a1155fc3462"},
+}
 
 # SukiSU Patch 仓库配置
 SUKISU_PATCH_REPO_CONFIG = {"repo_url": "https://github.com/ShirkNeko/SukiSU_patch.git"}
@@ -163,6 +169,11 @@ class BuildConfig:
     @property
     def resolved_susfs_commit(self) -> Optional[str]:
         return self.susfs_commit or SUSFS_COMPATIBLE_COMMITS.get(self.kernel_branch)
+
+    @property
+    def kernel_source_pin(self) -> Optional[dict]:
+        source_key = f"{self.android_version}-{self.kernel_version}-{self.sub_level}-{self.os_patch_level}"
+        return KERNEL_SOURCE_PINS.get(source_key)
 
     def get_susfs_patch_filename(self) -> str:
         return f"50_add_susfs_in_gki-{self.android_version}-{self.kernel_version}.patch"

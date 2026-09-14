@@ -190,6 +190,20 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
         self.env["REPO"] = str(repo_path)
         self.shell.env = self.env
 
+    def _pin_kernel_source(self, common_dir: Path):
+        pin = self.config.kernel_source_pin
+        if not pin:
+            return
+        logger.info(f"=== 锁定 kernel/common 源码: {pin['ref']} ===")
+        self._chdir(common_dir)
+        self._run_cmd(f"git fetch https://android.googlesource.com/kernel/common {pin['ref']} --depth=1", check=True)
+        self._run_cmd("git checkout --detach FETCH_HEAD", check=True)
+        head = self._run_cmd("git rev-parse HEAD", check=True, capture_output=True).stdout.strip()
+        if head != pin["commit"]:
+            raise RuntimeError(f"内核源码 commit 不匹配，预期 {pin['commit']}，实际 {head}")
+        logger.info(f"kernel/common pinned HEAD: {head}")
+        self._chdir(self.work_dir)
+
     def init_and_sync_kernel(self):
         logger.info("=== 初始化和同步内核源代码 ===")
         self._chdir(self.work_dir)
@@ -215,39 +229,7 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
         common_dir = self.work_dir / "common"
         if not common_dir.exists():
             raise RuntimeError("repo sync 失败，common 目录不存在")
-
-        # Pixel 6 / AP2A.240905.003.F1
-        # Exact Google kernel release:
-        # android-14.0.0_r0.130
-        # 12f3388846c3a8887a607afe1481ccc283455d89
-        logger.info("=== 锁定 Pixel 6 原厂 kernel/common commit ===")
-        
-        self._chdir(common_dir)
-        
-        self._run_cmd(
-            "git fetch https://android.googlesource.com/kernel/common "
-            "refs/tags/android-14.0.0_r0.130 --depth=1",
-            check=True
-        )
-        
-        self._run_cmd(
-            "git checkout --detach FETCH_HEAD",
-            check=True
-        )
-        
-        head = self._run_cmd(
-            "git rev-parse HEAD",
-            check=True,
-            capture_output=True,
-        ).stdout.strip()
-        
-        logger.info(f"当前 kernel/common commit: {head}")
-        
-        if head != "12f3388846c3a8887a607afe1481ccc283455d89":
-            raise RuntimeError(f"内核源码 commit 不匹配，实际为: {head}")
-        
-        self._chdir(self.work_dir)
-
+        self._pin_kernel_source(common_dir)
         self._apply_legacy_fixes(remote)
         logger.info("=== 内核源代码同步完成 ===")
 
@@ -297,38 +279,24 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
     def add_kernelsu(self):
         logger.info("=== 添加 SukiSU Ultra Built-in ===")
         self._chdir(self.work_dir)
-    
-        # Pixel 6 这次固定使用官方 builtin 分支
-        setup_url = KSU_REPO_CONFIG["setup_script"]
-        self._run_cmd(
-            f"curl -LSs {setup_url} | bash -s builtin",
-            check=True
-        )
+        setup_url = (f"https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/{self.config.kernelsu_commit}/kernel/setup.sh"
+                     if self.config.kernelsu_commit else KSU_REPO_CONFIG["setup_script"])
+        self._run_cmd(f"curl -LSs {setup_url} | bash -s builtin", check=True)
         ksu_dir = self.work_dir / "KernelSU"
         if not ksu_dir.exists():
             raise RuntimeError("SukiSU Ultra 克隆失败，KernelSU 目录不存在")
-    
         self._chdir(ksu_dir)
-    
-        # SukiSU Ultra builtin v4.2.0 当前上游编译修复：
-        # PR #964 - restore missing kernel_umount_feature_set
-        logger.info("=== 应用 SukiSU builtin kernel_umount 修复 PR #964 ===")
-        self._run_cmd(
-            "git fetch origin pull/964/head:fix-kernel-umount",
-            check=True
-        )
-        self._run_cmd(
-            "git cherry-pick --no-commit 77d4352a930155f9eae8724515db04c743aab6c4",
-            check=True
-        )
-    
-        # 输出 SukiSU 实际版本，方便核对
-        sukisu_head = self._run_cmd(
-            "git rev-parse HEAD",
-            check=True,
-            capture_output=True,
-        ).stdout.strip()
-        logger.info(f"SukiSU patched HEAD: {sukisu_head}")
+        if self.config.kernelsu_commit:
+            self._run_cmd(f"git fetch origin {self.config.kernelsu_commit} --depth=1", check=True)
+            self._run_cmd("git checkout --detach FETCH_HEAD", check=True)
+        kernel_umount_file = ksu_dir / "kernel/feature/kernel_umount.c"
+        needs_kernel_umount_fix = kernel_umount_file.exists() and not re.search(r"static\s+int\s+kernel_umount_feature_set\s*\(", kernel_umount_file.read_text())
+        if needs_kernel_umount_fix:
+            logger.info("=== 应用 SukiSU builtin kernel_umount 修复 PR #964 ===")
+            self._run_cmd("git fetch origin pull/964/head --depth=1", check=True)
+            self._run_cmd("git cherry-pick --no-commit FETCH_HEAD", check=True)
+        sukisu_head = self._run_cmd("git rev-parse HEAD", check=True, capture_output=True).stdout.strip()
+        logger.info(f"SukiSU HEAD: {sukisu_head}")
         self._chdir(self.work_dir)
 
     def add_bbg(self):
