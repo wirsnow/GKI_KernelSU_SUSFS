@@ -130,18 +130,21 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
         self.shell.cwd = str(path)
 
     def _apply_susfs_commit(self):
-        susfs_commit = self.config.resolved_susfs_commit
-        if not susfs_commit or not self.susfs_dir.exists():
-            return
+        if not self.susfs_dir.exists():
+            raise RuntimeError("SUSFS 克隆失败，源码目录不存在")
         self._chdir(self.susfs_dir)
-        if susfs_commit.startswith("HEAD~"):
-            self._run_cmd("git fetch origin", check=False)
-            self._run_cmd(f"git reset --hard {susfs_commit}", check=True)
-        else:
-            self._run_cmd("git fetch origin", check=False)
-            self._run_cmd(f"git checkout {susfs_commit}", check=True)
+        # 每次同步目标分支，避免复用旧目录时仍停留在历史提交。
+        self._run_cmd(f"git fetch origin {self.config.kernel_branch}", check=True)
+        self._run_cmd("git checkout --detach FETCH_HEAD", check=True)
+        susfs_commit = self.config.resolved_susfs_commit
+        if susfs_commit:
+            if susfs_commit.startswith("HEAD~"):
+                self._run_cmd(f"git checkout --detach {susfs_commit}", check=True)
+            else:
+                self._run_cmd(f"git fetch origin {susfs_commit}", check=True)
+                self._run_cmd("git checkout --detach FETCH_HEAD", check=True)
         susfs_head = self._run_cmd("git rev-parse HEAD", check=True, capture_output=True).stdout.strip()
-        logger.info(f"SUSFS pinned HEAD: {susfs_head}")
+        logger.info(f"SUSFS HEAD: {susfs_head}")
         self._chdir(self.workspace)
 
     def clone_repositories(self):
@@ -286,11 +289,10 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
         if not ksu_dir.exists():
             raise RuntimeError("SukiSU Ultra 克隆失败，KernelSU 目录不存在")
         self._chdir(ksu_dir)
-        if self.config.kernelsu_commit:
-            self._run_cmd(f"git fetch origin {self.config.kernelsu_commit} --depth=1", check=True)
-            self._run_cmd("git checkout --detach FETCH_HEAD", check=True)
+        self._run_cmd(f"git fetch origin {self.config.kernelsu_commit or 'builtin'} --depth=1", check=True)
+        self._run_cmd("git checkout --detach FETCH_HEAD", check=True)
         kernel_umount_file = ksu_dir / "kernel/feature/kernel_umount.c"
-        needs_kernel_umount_fix = kernel_umount_file.exists() and not re.search(r"static\s+int\s+kernel_umount_feature_set\s*\(", kernel_umount_file.read_text())
+        needs_kernel_umount_fix = kernel_umount_file.exists() and not re.search(r"static\s+int\s+kernel_umount_feature_set\s*\(", kernel_umount_file.read_text(encoding="utf-8"))
         if needs_kernel_umount_fix:
             logger.info("=== 应用 SukiSU builtin kernel_umount 修复 PR #964 ===")
             self._run_cmd("git fetch origin pull/964/head --depth=1", check=True)
@@ -327,8 +329,24 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
         self._chdir(self.work_dir)
         common_dir = self.work_dir / "common"
         susfs_patch = self.susfs_dir / "kernel_patches" / self.config.get_susfs_patch_filename()
-        if susfs_patch.exists():
-            self._run_cmd(f"cp {susfs_patch} {common_dir}/", check=False)
+        if not susfs_patch.exists():
+            raise RuntimeError(f"SUSFS 补丁不存在: {susfs_patch}")
+        patch_content = susfs_patch.read_text(encoding="utf-8")
+        ksu_source = "\n".join(path.read_text(encoding="utf-8") for path in (self.work_dir / "KernelSU/kernel").rglob("*.c"))
+        # 提前检查补丁依赖的入口，避免旧版 SukiSU 到最终链接时才报缺失符号。
+        added_source = "\n".join(line[1:] for line in patch_content.splitlines() if line.startswith("+") and not line.startswith("+++"))
+        required_hooks = set(re.findall(r"^extern\s+(?:__attribute__\(\(.*?\)\)\s+)?(?:int|void|bool)\s+(ksu_\w+)\s*\(", added_source, re.MULTILINE))
+        missing_hooks = sorted(name for name in required_hooks if not re.search(rf"\b{re.escape(name)}\s*\([^;{{}}]*\)\s*{{", ksu_source))
+        if missing_hooks:
+            raise RuntimeError(f"SukiSU/SUSFS 接口不兼容，SukiSU 缺少: {', '.join(missing_hooks)}")
+        # 新版 SukiSU 的开关为 bool，不能继续按 static_key 读取。
+        if re.search(r"^bool\s+ksu_su_compat_enabled\b", ksu_source, re.MULTILINE):
+            patch_content = patch_content.replace("extern struct static_key_true ksu_su_compat_enabled;", "extern bool ksu_su_compat_enabled;")
+            patch_content = patch_content.replace("static_branch_likely(&ksu_su_compat_enabled)", "likely(READ_ONCE(ksu_su_compat_enabled))")
+            patch_content = patch_content.replace("static_branch_unlikely(&ksu_su_compat_enabled)", "unlikely(READ_ONCE(ksu_su_compat_enabled))")
+            logger.info("已适配 SukiSU bool 类型的 sucompat 开关")
+        (common_dir / self.config.get_susfs_patch_filename()).write_text(patch_content, encoding="utf-8")
+        logger.info("SukiSU/SUSFS 入口检查通过，完整兼容性仍由内核编译验证")
         for src, dst in [
             (self.susfs_dir / "kernel_patches/fs", common_dir / "fs/"),
             (self.susfs_dir / "kernel_patches/include/linux", common_dir / "include/linux/"),
@@ -347,7 +365,7 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
     def _fix_susfs_statfs_declaration(statfs_file: Path):
         declaration = "extern int susfs_sus_kstat_spoof_vfs_statfs(struct inode *inode, struct kstatfs *buf, bool *is_fuse);\n"
         helper = "static int susfs_statfs_by_dentry(struct dentry *dentry, struct kstatfs *buf, bool *is_fuse)"
-        content = statfs_file.read_text()
+        content = statfs_file.read_text(encoding="utf-8")
         declaration_index = content.find(declaration)
         helper_index = content.find(helper)
         if declaration_index < 0 or helper_index < 0:
@@ -357,7 +375,7 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
         content = content[:declaration_index] + content[declaration_index + len(declaration):]
         helper_index = content.find(helper)
         content = content[:helper_index] + declaration + content[helper_index:]
-        statfs_file.write_text(content)
+        statfs_file.write_text(content, encoding="utf-8")
         logger.info("已修复 SUSFS statfs 函数声明顺序")
 
     def apply_sukisu_patches(self):

@@ -7,6 +7,7 @@
     {"sub_level": "X", "os_patch_level": "lts", "revision": "r1"}
   ],
   "android13-5.10": [
+    {"sub_level": "157", "os_patch_level": "2023-02"},
     {"sub_level": "198", "os_patch_level": "2024-01"}
   ],
   "android13-5.15": [

@@ -8,10 +8,10 @@ class MemoryFile:
     def __init__(self, content):
         self.content = content
 
-    def read_text(self):
+    def read_text(self, encoding="utf-8"):
         return self.content
 
-    def write_text(self, content):
+    def write_text(self, content, encoding="utf-8"):
         self.content = content
 
 
@@ -30,17 +30,17 @@ class SusfsStatfsDeclarationTest(unittest.TestCase):
 
 
 class SusfsCommitCompatibilityTest(unittest.TestCase):
-    def test_android13_5_10_uses_sukisu_4_2_compatible_susfs_commit(self):
+    def test_android13_5_10_uses_latest_susfs_by_default(self):
         config = BuildConfig(android_version="android13", kernel_version="5.10", sub_level="198", os_patch_level="2024-06")
-        self.assertEqual(config.resolved_susfs_commit, "818714ed0c7f13f478b0d80541c76abb9e71d3c6")
+        self.assertIsNone(config.resolved_susfs_commit)
 
     def test_explicit_susfs_commit_takes_precedence(self):
         config = BuildConfig(android_version="android13", kernel_version="5.10", sub_level="198", os_patch_level="2024-06", susfs_commit="abcdef1")
         self.assertEqual(config.resolved_susfs_commit, "abcdef1")
 
-    def test_android14_6_1_uses_sukisu_4_2_compatible_susfs_commit(self):
+    def test_android14_6_1_uses_latest_susfs_by_default(self):
         config = BuildConfig(android_version="android14", kernel_version="6.1", sub_level="145", os_patch_level="2025-09")
-        self.assertEqual(config.resolved_susfs_commit, "e5b4d2879836cfb8379010a8ebee76c519f5c834")
+        self.assertIsNone(config.resolved_susfs_commit)
 
 
 class KernelSourcePinTest(unittest.TestCase):
