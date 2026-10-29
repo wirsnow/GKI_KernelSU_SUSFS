@@ -1,4 +1,5 @@
 import os
+import hashlib
 import subprocess
 import logging
 import re
@@ -8,7 +9,7 @@ from dataclasses import dataclass, field
 
 from config import (BuildConfig, KSU_REPO_CONFIG, SUSFS_REPO_CONFIG, SUKISU_PATCH_REPO_CONFIG,
                    ANYKERNEL_CONFIG, KERNEL_PATCHES_CONFIG, BBG_CONFIG, TOOLCHAIN_CONFIG,
-                   LEGACY_FIXES, OP8E_PATCH_URL, KPM_PATCH_URL)
+                   LEGACY_FIXES, OP8E_PATCH_URL, KPM_RELEASE_URL)
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -740,8 +741,25 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
         self._chdir(image_dir)
         self._run_cmd("cp Image Image.unpatched", check=True)
         (image_dir / "oImage").unlink(missing_ok=True)
-        self._run_cmd(f"curl -fLSs --retry 3 {KPM_PATCH_URL} -o patch && chmod 755 patch && ./patch", check=True)
-        # 修补工具成功退出也可能输出损坏入口，校验通过后才替换原 Image。
+        # 一体化 patch_linux 曾内嵌空载荷；从同一正式版本分别获取工具和完整载荷。
+        release_url = self._run_cmd(f"curl -fLSs --retry 3 -o /dev/null -w '%{{url_effective}}' {KPM_RELEASE_URL}", check=True, capture_output=True).stdout.strip()
+        if not re.fullmatch(r"https://github\.com/SukiSU-Ultra/SukiSU_KernelPatch_patch/releases/tag/[A-Za-z0-9._-]+", release_url):
+            raise RuntimeError(f"无法确定 KPM 正式版本: {release_url}")
+        logger.info(f"KPM release: {release_url.rsplit('/', 1)[-1]}")
+        download_base = release_url.replace("/releases/tag/", "/releases/download/")
+        for name in ("kpimg", "kptools-linux"):
+            self._run_cmd(f"curl -fLSs --retry 3 {download_base}/{name} -o {name}", check=True)
+        payload = (image_dir / "kpimg").read_bytes()
+        if len(payload) < 4096 or payload[:8] != b"KP1158\x00\x00" or payload[8:12] == bytes(4):
+            raise RuntimeError(f"无效的 KPM 载荷，长度 {len(payload)}，拒绝修补")
+        tool = (image_dir / "kptools-linux").read_bytes()
+        if len(tool) < 64 or tool[:6] != b"\x7fELF\x02\x01" or int.from_bytes(tool[18:20], "little") != 62:
+            raise RuntimeError("kptools-linux 不是有效的 Linux x86_64 ELF 工具")
+        logger.info(f"KPM payload: {len(payload)} bytes, SHA256: {hashlib.sha256(payload).hexdigest()}")
+        logger.info(f"KPM tool SHA256: {hashlib.sha256(tool).hexdigest()}")
+        self._run_cmd("chmod 755 kptools-linux && ./kptools-linux -l -k kpimg", check=True)
+        self._run_cmd("./kptools-linux -p -s 123 -i Image -k kpimg -o oImage", check=True)
+        # 修补命令成功退出后仍检查入口，避免把损坏输出打包。
         self._validate_arm64_image(image_dir / "oImage")
         self._run_cmd("mv oImage Image", check=True)
 

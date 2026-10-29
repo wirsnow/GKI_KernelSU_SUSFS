@@ -128,6 +128,8 @@ Pixel 7（panther）Android 13 / `TQ3A.230901.001` 可手动选择 `android13 / 
 
 ## 支持的功能
 
+KPM 修补从 `SukiSU-Ultra/SukiSU_KernelPatch_patch` 的最新正式 Release 解析版本，并下载同一版本的 `kptools-linux` 与 `kpimg`。修补前检查载荷格式，修补失败立即停止，修补后检查 ARM64 入口范围；日志记录版本和 SHA-256。SukiSU、SUSFS 的最新版选择方式及工作流默认编译参数保持不变。
+
 | 功能 | 说明 |
 |------|------|
 | [KernelSU](https://kernelsu.org/zh_CN/) | SukiSU 内核Root方案 |
