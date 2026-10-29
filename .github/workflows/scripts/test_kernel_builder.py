@@ -1,4 +1,8 @@
+import io
 import unittest
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from config import BuildConfig
 from kernel_builder import KernelBuilder
@@ -57,6 +61,21 @@ class KernelSourcePinTest(unittest.TestCase):
     def test_other_kernel_uses_manifest_branch(self):
         config = BuildConfig(android_version="android14", kernel_version="6.1", sub_level="124", os_patch_level="2025-02")
         self.assertIsNone(config.kernel_source_pin)
+
+
+class KernelImageEntryTest(unittest.TestCase):
+    def test_stock_entry_passes_and_failed_pixel7_image_is_rejected(self):
+        cases = [
+            (51616256, "4d5a0091ff3fb214000000000000000000001d03000000000a0000000000000000000000000000000000000000000000000000000000000041524d6440000000", False),
+            (43782288, "4d5a0091ff07a714000000000000000000309c02000000000a0000000000000000000000000000000000000000000000000000000000000041524d6440000000", True),
+        ]
+        for size, header, rejected in cases:
+            with self.subTest(size=size), patch.object(Path, "stat", return_value=SimpleNamespace(st_size=size)), patch.object(Path, "open", return_value=io.BytesIO(bytes.fromhex(header))):
+                if rejected:
+                    with self.assertRaisesRegex(RuntimeError, "Image 入口跳转越界"):
+                        KernelBuilder._validate_arm64_image(Path("Image"))
+                else:
+                    KernelBuilder._validate_arm64_image(Path("Image"))
 
 
 if __name__ == "__main__":

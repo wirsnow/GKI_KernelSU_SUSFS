@@ -213,7 +213,7 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
         formatted_branch = self.config.formatted_branch
 
         self._run_cmd(f"$REPO init --depth=1 -u https://android.googlesource.com/kernel/manifest "
-                     f"-b common-{formatted_branch} --repo-rev=v2.16", check=False)
+                     f"-b common-{formatted_branch} --repo-rev=v2.16", check=True)
 
         remote = subprocess.run(f"git ls-remote https://android.googlesource.com/kernel/common {formatted_branch}",
                                shell=True, capture_output=True, text=True).stdout.strip()
@@ -227,7 +227,7 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
 
         self.env["REMOTE_BRANCH"] = remote
         logger.info("同步内核源代码...")
-        self._run_cmd("$REPO --trace sync -c -j$(nproc --all) --no-tags --fail-fast", check=False)
+        self._run_cmd("$REPO --trace sync -c -j$(nproc --all) --no-tags --fail-fast", check=True)
 
         common_dir = self.work_dir / "common"
         if not common_dir.exists():
@@ -487,7 +487,7 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
             return
 
         with open(config_file, "a") as f:
-            f.write(self.KERNEL_CONFIG_TEMPLATE)
+            f.write(self.KERNEL_CONFIG_TEMPLATE.replace("CONFIG_KPM=y", f"CONFIG_KPM={'y' if self.config.use_kpm else 'n'}"))
             if self.config.kernel_version != "6.6":
                 f.write("CONFIG_KSU_SUSFS_SUS_PATH=y\n")
             else:
@@ -703,6 +703,27 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
             logger.error(f"编译过程出错: {e}")
             return False
 
+    @staticmethod
+    def _validate_arm64_image(image_path: Path):
+        size = image_path.stat().st_size
+        with image_path.open("rb") as image:
+            header = image.read(64)
+        if len(header) != 64 or header[56:60] != b"ARMd":
+            raise RuntimeError(f"无效的 ARM64 Image 头: {image_path}")
+        for offset in (0, 4):
+            instruction = int.from_bytes(header[offset:offset + 4], "little")
+            if instruction & 0xFC000000 != 0x14000000:
+                continue
+            immediate = instruction & 0x03FFFFFF
+            if immediate & (1 << 25):
+                immediate -= 1 << 26
+            target = offset + immediate * 4
+            if target < 0 or target + 4 > size:
+                raise RuntimeError(f"Image 入口跳转越界: {image_path}, 目标 0x{target:x}, 文件长度 0x{size:x}")
+            logger.info(f"Image 入口检查通过: 0x{target:x}, 文件长度 0x{size:x}")
+            return
+        raise RuntimeError(f"无法识别 ARM64 Image 入口跳转: {image_path}")
+
     def patch_kpm_image(self):
         if not self.config.use_kpm or self.config.kernel_version == "6.6":
             return
@@ -714,12 +735,15 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
         else:
             image_dir = self.work_dir / "bazel-bin/common/kernel_aarch64"
 
-        if not image_dir.exists():
-            return
+        image_path = image_dir / "Image"
+        self._validate_arm64_image(image_path)
         self._chdir(image_dir)
-        self._run_cmd(f"curl -LSs {KPM_PATCH_URL} -o patch && chmod 777 patch && ./patch", check=False)
-        if (image_dir / "oImage").exists():
-            self._run_cmd("mv oImage Image", check=False)
+        self._run_cmd("cp Image Image.unpatched", check=True)
+        (image_dir / "oImage").unlink(missing_ok=True)
+        self._run_cmd(f"curl -fLSs --retry 3 {KPM_PATCH_URL} -o patch && chmod 755 patch && ./patch", check=True)
+        # 修补工具成功退出也可能输出损坏入口，校验通过后才替换原 Image。
+        self._validate_arm64_image(image_dir / "oImage")
+        self._run_cmd("mv oImage Image", check=True)
 
     def prepare_boot_images(self) -> list:
         logger.info("=== 准备启动镜像 ===")
@@ -733,6 +757,7 @@ CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
         else:
             image_source = self.work_dir / "bazel-bin/common/kernel_aarch64"
 
+        self._validate_arm64_image(image_source / "Image")
         for image_name in ["Image", "Image.lz4"]:
             src = image_source / image_name
             if src.exists():
